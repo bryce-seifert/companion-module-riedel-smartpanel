@@ -12,7 +12,7 @@ This module requires the RSP-1232HL panel to be running firmware version 2.0.0 o
 
 ### Connection Settings
 
-- **Host**: IP address of the Riedel panel (e.g., 10.46.70.52)
+- **Host**: IP address of the Riedel panel (e.g., 192.168.0.1)
 - **Port**: WebSocket port (default: 80)
 
 ## Supported Actions
