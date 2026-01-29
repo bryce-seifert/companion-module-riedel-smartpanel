@@ -41,9 +41,10 @@ export class RiedelRSP1232HLInstance extends InstanceBase<DeviceConfig> {
 	public controlPanelEnabled = false
 	public nmosEnabled = false
 	private nmosStatus = 'Unknown'
+	private wasConnected = false
 
 	constructor(internal: unknown) {
-		super(internal as ConstructorParameters<typeof InstanceBase>[0])
+		super(internal)
 	}
 
 	async init(config: DeviceConfig): Promise<void> {
@@ -80,9 +81,23 @@ export class RiedelRSP1232HLInstance extends InstanceBase<DeviceConfig> {
 	}
 
 	private initWebSocket(): void {
+		this.wasConnected = false
+		if (this.reconnectTimer) {
+			clearTimeout(this.reconnectTimer)
+			this.reconnectTimer = null
+		}
 		if (!this.config.host) {
 			this.updateStatus(InstanceStatus.BadConfig, 'No host configured')
 			return
+		}
+		if (!this.config.port) {
+			this.updateStatus(InstanceStatus.BadConfig, 'No port configured')
+			return
+		}
+		if (this.ws) {
+			this.ws.removeAllListeners()
+			this.ws.close()
+			this.ws = null
 		}
 		const wsUrl = `ws://${this.config.host}:${this.config.port}/websocket`
 		this.log('info', `Connecting to ${wsUrl}`)
@@ -91,6 +106,7 @@ export class RiedelRSP1232HLInstance extends InstanceBase<DeviceConfig> {
 			this.ws.on('open', () => {
 				this.log('info', 'WebSocket connected')
 				this.updateStatus(InstanceStatus.Ok)
+				this.wasConnected = true
 				this.setVariableValues({ connection_status: 'Connected' })
 				this.checkFeedbacks('connectionStatus')
 				// Fetch initial network status and settings
@@ -109,20 +125,39 @@ export class RiedelRSP1232HLInstance extends InstanceBase<DeviceConfig> {
 				this.fetchNmosStatus()
 			})
 			this.ws.on('message', (data: WebSocket.Data) => {
-				this.handleMessage(data.toString())
+				let message = ''
+				if (typeof data === 'string') {
+					message = data
+				} else if (Buffer.isBuffer(data)) {
+					message = data.toString('utf8')
+				} else if (Array.isArray(data)) {
+					// Handle Buffer[] if it occurs
+					message = Buffer.concat(data).toString('utf8')
+				} else {
+					// ArrayBuffer
+					message = Buffer.from(data).toString('utf8')
+				}
+				this.handleMessage(message)
 			})
 			this.ws.on('error', (error: Error) => {
-				this.log('error', `WebSocket error: ${error.message}`)
+				if (this.wasConnected) {
+					this.log('error', `WebSocket error: ${error.message}`)
+				}
 				this.updateStatus(InstanceStatus.ConnectionFailure, error.message)
 			})
 			this.ws.on('close', () => {
-				this.log('warn', 'WebSocket disconnected')
-				this.updateStatus(InstanceStatus.Disconnected)
+				if (this.wasConnected) {
+					this.log('warn', 'WebSocket disconnected')
+					this.updateStatus(InstanceStatus.Disconnected)
+				}
+				this.wasConnected = false
 				this.setVariableValues({ connection_status: 'Disconnected' })
 				this.checkFeedbacks('connectionStatus')
-				this.reconnectTimer = setTimeout(() => {
-					this.initWebSocket()
-				}, 5000)
+				if (!this.reconnectTimer) {
+					this.reconnectTimer = setTimeout(() => {
+						this.initWebSocket()
+					}, 5000)
+				}
 			})
 		} catch (error) {
 			this.log('error', `Failed to create WebSocket: ${error}`)
